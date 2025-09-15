@@ -1,9 +1,149 @@
 ---
-name: "..."
-description: "..."
+name: pull-request-setup
+description: "Fill in assignee and project"
 inputs:
-  ...
-outputs:
-  ...
+  iteration_field_name:
+    description: "Name of the project field that contains the iteration"
+    required: true
+  project_title:
+    description: "Name of the project to add to the pull request"
+    required: true
+  pull_request_number:
+    description: "The pull request number"
+    required: true
+  status:
+    description: "A status to set for the pull request"
+    required: false
+    default: "In review"
+  token:
+    description: "A token with write access to pull_requests and project"
+    required: true
 runs:
-  ...
+  using: "composite"
+  steps:
+    - name: "Assign PR to author if unassigned"
+      id: pull_request
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      shell: bash
+      run: |
+        [ "${RUNNER_DEBUG}" == 1 ] && set -xv
+        set -u
+
+        gh auth status
+
+        pr_info=$(
+          gh pr view "${{ inputs.pull_request_number }}" --repo "${{ github.repository }}" \
+          --json author,assignees,url
+        )
+
+        if
+          echo "$pr_info" | jq -e '.author.is_bot == true' > /dev/null;
+        then
+          echo "Aborting, a bot created the pull request"
+          exit 0
+        fi
+
+        echo "url=$(echo "$pr_info" | jq -r '.url')" >>"${GITHUB_OUTPUT}"
+        author=$(echo "$pr_info" | jq -r '.author.login')
+        if
+          echo "$pr_info" | jq -e --arg author "$author" '
+            (.assignees | length >= 10) or
+            (.assignees[].login == $author)
+            ' > /dev/null;
+        then
+          echo "$author already assigned or too many assignees."
+        else
+          gh pr edit "${{ inputs.pull_request_number }}" --repo "${{ github.repository }}" \
+            --add-assignee "$author"
+          echo "$author added as assignee."
+        fi
+    - name: "Add PR to ${{ inputs.project_title }} and set fields"
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        [ "${RUNNER_DEBUG}" == 1 ] && set -xv
+        set -u
+        
+        gh auth status
+        
+        echo "::group:: Add the pull-request to ${{ inputs.project_title }}"
+        project_info=$(
+          gh project list --owner "${{ github.repository_owner }}" \
+            --format json \
+            --jq '.projects[] | select(.title == "${{ inputs.project_title }}")'
+        )
+        if [ -z "${project_info}" ]; then
+          echo "Project '${{ inputs.project_title }}' not found. Skipping."
+          exit 0
+        fi
+        
+        project_id=$( echo "${project_info}" | jq -r '.id' )
+        project_number=$( echo "${project_info}" | jq -r '.number' )
+        
+        pr_node_id=$(
+          gh project item-add "${project_number}" --owner "${{ github.repository_owner }}" \
+            --format json --jq '.id' \
+            --url "${{ steps.pull_request.outputs.url }}"
+        )
+        echo "::endgroup::"
+        
+        fields=$(
+          gh project field-list "$project_number" --owner "${{ github.repository_owner }}" \
+            --format json
+        )
+        
+        echo "::group::Set the pull-request status"
+        status_field_id=$(
+          echo "${fields}" | jq -r \
+          '.fields[] | select(.name == "Status") | .id' \
+        )
+        in_review_option_id=$(
+          echo "${fields}" | jq -r \
+          '.fields[] | select(.name == "Status") | .options[] | select(.name == "${{ inputs.status }}") | .id' \
+        )      
+        gh project item-edit \
+          --project-id "$project_id" --id "$pr_node_id" \
+          --field-id "$status_field_id" --single-select-option-id "$in_review_option_id"
+        echo "::endgroup::"
+        
+        echo "::group::Set the iteration"
+        iteration_field_id=$(
+          echo "${fields}" | jq -r \
+          '.fields[] | select(.name == "Iteration") | .id' \
+        )
+        iterations_json=$(
+          gh api graphql -f query='
+            query($projectId:ID!) {
+              node(id: $projectId) {
+                ... on ProjectV2 {
+                  field(name: "${{ inputs.iteration_field_name }}") {
+                    ... on ProjectV2IterationField {
+                      configuration {
+                        iterations {
+                          id
+                          title
+                          startDate
+                          duration
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ' -f projectId="$project_id" --jq '.data.node.field.configuration.iterations'
+        )
+        current_iteration=$(
+          echo "$iterations_json" | jq -r '
+            map( .startDate as $d | . + {startDateS: ($d + "T00:00:00Z" | fromdateiso8601)} )
+            |
+            map(select(.startDateS <= now and (.startDateS + (.duration * 7 * 24 * 60 * 60) > now)))
+            | .[0].id
+          '
+        )
+        gh project item-edit \
+          --project-id "$project_id" --id "$pr_node_id" \
+          --field-id "$iteration_field_id" --iteration-id "$current_iteration"
+        echo "::endgroup::"
