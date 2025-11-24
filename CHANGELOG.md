@@ -24,6 +24,10 @@ Categories, defined in [changemap.json](.github/clq/changemap.json):
 
 - The action no-longer supports settings any of the project fields. The action will only assign the pull request to the author.
 
+### Fixed
+
+- Bump `actions/checkout` from 5 to 7
+
 ## [1.0.1] - 2025-08-19
 
 ### Fixed
