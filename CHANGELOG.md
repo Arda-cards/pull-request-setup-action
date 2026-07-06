@@ -18,6 +18,12 @@ Categories, defined in [changemap.json](.github/clq/changemap.json):
   - `Fixed` for any bugfixes.
   - `Security` in case of vulnerabilities.
 
+## [2.0.0] - 2026-07-06
+
+### Removed
+
+- The action no-longer supports settings any of the project fields. The action will only set the pull request author.
+
 ## [1.0.1] - 2025-08-19
 
 ### Fixed
