@@ -18,6 +18,17 @@ Categories, defined in [changemap.json](.github/clq/changemap.json):
   - `Fixed` for any bugfixes.
   - `Security` in case of vulnerabilities.
 
+## [2.0.0] - 2026-07-06
+
+### Removed
+
+- The action no longer supports setting any of the project fields. The action will only assign the pull request to the author.
+
+### Fixed
+
+- Bump `actions/checkout` from 5 to 7
+- Change `super-linter` to work against a fixed set of pre-approved linters.
+
 ## [1.0.1] - 2025-08-19
 
 ### Fixed
